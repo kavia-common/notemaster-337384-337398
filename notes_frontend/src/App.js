@@ -31,13 +31,82 @@ function uniqueSortedTagsFromNotes(notes) {
   return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * Note sorting options supported by the UI.
+ *
+ * Contract:
+ * - Input: `sortKey` in {"updated","newest","title"}.
+ * - Output: comparator function for Array.prototype.sort.
+ * - Invariants:
+ *   - Sorting is stable via tiebreakers: pinned desc -> primary key -> title -> id.
+ *   - Dates are treated as ISO strings; invalid dates become epoch 0.
+ */
+const NOTE_SORT = {
+  updated: { label: "Updated", key: "updated" },
+  newest: { label: "Newest", key: "newest" },
+  title: { label: "Title", key: "title" },
+};
+
+function safeTime(iso) {
+  const t = Date.parse(iso || "");
+  return Number.isFinite(t) ? t : 0;
+}
+
+function compareStrings(a, b) {
+  return String(a || "").localeCompare(String(b || ""), undefined, { sensitivity: "base" });
+}
+
+/**
+ * Sort notes consistently for both normal listing and search results.
+ *
+ * Contract:
+ * - Inputs:
+ *   - `notes`: array of note objects (expects {id,title,created_at,updated_at,pinned}).
+ *   - `sortKey`: one of NOTE_SORT keys.
+ * - Output: new array (does not mutate input).
+ * - Errors: none (defensive conversion).
+ */
+function sortNotesFlow(notes, sortKey) {
+  const key = NOTE_SORT[sortKey]?.key || NOTE_SORT.updated.key;
+
+  const toSorted = (arr) =>
+    [...arr].sort((a, b) => {
+      // Keep pinned grouped first, regardless of sort selection.
+      const pinnedA = Boolean(a?.pinned);
+      const pinnedB = Boolean(b?.pinned);
+      if (pinnedA !== pinnedB) return pinnedA ? -1 : 1;
+
+      if (key === "title") {
+        const c = compareStrings(a?.title, b?.title);
+        if (c !== 0) return c;
+      } else if (key === "newest") {
+        const c = safeTime(b?.created_at) - safeTime(a?.created_at);
+        if (c !== 0) return c;
+      } else {
+        // "updated" (default)
+        const c = safeTime(b?.updated_at) - safeTime(a?.updated_at);
+        if (c !== 0) return c;
+      }
+
+      // Stable/consistent tiebreakers.
+      const titleTie = compareStrings(a?.title, b?.title);
+      if (titleTie !== 0) return titleTie;
+
+      return compareStrings(a?.id, b?.id);
+    });
+
+  return toSorted(notes || []);
+}
+
 // PUBLIC_INTERFACE
 function App() {
   /** NoteMaster application root component. */
 
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
-  const [notes, setNotes] = useState([]);
+  const [sortKey, setSortKey] = useState(NOTE_SORT.updated.key);
+
+  const [rawNotes, setRawNotes] = useState([]);
   const [total, setTotal] = useState(0);
 
   const [selectedId, setSelectedId] = useState(null);
@@ -53,12 +122,14 @@ function App() {
 
   const searchDebounceRef = useRef(null);
 
+  const notes = useMemo(() => sortNotesFlow(rawNotes, sortKey), [rawNotes, sortKey]);
+
   const selectedNote = useMemo(
     () => notes.find((n) => n.id === selectedId) || null,
     [notes, selectedId]
   );
 
-  const availableTags = useMemo(() => uniqueSortedTagsFromNotes(notes), [notes]);
+  const availableTags = useMemo(() => uniqueSortedTagsFromNotes(rawNotes), [rawNotes]);
 
   const pinnedNotes = useMemo(() => notes.filter((n) => Boolean(n.pinned)), [notes]);
   const otherNotes = useMemo(() => notes.filter((n) => !Boolean(n.pinned)), [notes]);
@@ -68,14 +139,18 @@ function App() {
     setError("");
     try {
       const data = await listNotes({ q: q ?? query, tag: tag ?? tagFilter, limit: 100, offset: 0 });
-      setNotes(data.items || []);
+      const items = data.items || [];
+      setRawNotes(items);
       setTotal(data.total || 0);
 
-      // keep selection stable; if selected note disappears, clear it.
+      // keep selection stable; if selected note disappears, select the first item post-sort.
       setSelectedId((prev) => {
-        if (!prev) return (data.items && data.items[0] && data.items[0].id) || null;
-        const stillThere = (data.items || []).some((n) => n.id === prev);
-        return stillThere ? prev : ((data.items && data.items[0] && data.items[0].id) || null);
+        const sorted = sortNotesFlow(items, sortKey);
+        const first = (sorted && sorted[0] && sorted[0].id) || null;
+
+        if (!prev) return first;
+        const stillThere = (items || []).some((n) => n.id === prev);
+        return stillThere ? prev : first;
       });
     } catch (e) {
       setError(e?.message || "Failed to load notes.");
@@ -102,6 +177,18 @@ function App() {
   const onChangeTagFilter = (value) => {
     setTagFilter(value);
     load({ tag: value });
+  };
+
+  const onChangeSort = (value) => {
+    setSortKey(value);
+
+    // Keep selection stable in case the top item changes after sorting.
+    // If selected note exists, keep it; else select the new first.
+    setSelectedId((prev) => {
+      if (prev && (rawNotes || []).some((n) => n.id === prev)) return prev;
+      const sorted = sortNotesFlow(rawNotes, value);
+      return (sorted[0] && sorted[0].id) || null;
+    });
   };
 
   const openCreate = () => {
@@ -231,6 +318,29 @@ function App() {
                   {availableTags.map((t) => (
                     <option key={t} value={t}>
                       {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="pill" aria-label="Sort notes">
+                <span style={{ fontWeight: 700 }}>Sort</span>
+                <select
+                  value={sortKey}
+                  onChange={(e) => onChangeSort(e.target.value)}
+                  style={{
+                    border: "none",
+                    outline: "none",
+                    background: "transparent",
+                    color: "inherit",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                  aria-label="Sort notes"
+                >
+                  {Object.values(NOTE_SORT).map((opt) => (
+                    <option key={opt.key} value={opt.key}>
+                      {opt.label}
                     </option>
                   ))}
                 </select>
