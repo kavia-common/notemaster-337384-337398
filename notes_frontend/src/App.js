@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import { createNote, deleteNote, listNotes, updateNote } from "./api/notesApi";
+import { createNote, deleteNote, listNotes, setNotePinned, updateNote } from "./api/notesApi";
 
 function formatDate(iso) {
   try {
@@ -59,6 +59,9 @@ function App() {
   );
 
   const availableTags = useMemo(() => uniqueSortedTagsFromNotes(notes), [notes]);
+
+  const pinnedNotes = useMemo(() => notes.filter((n) => Boolean(n.pinned)), [notes]);
+  const otherNotes = useMemo(() => notes.filter((n) => !Boolean(n.pinned)), [notes]);
 
   const load = async ({ q, tag } = {}) => {
     setLoading(true);
@@ -174,6 +177,22 @@ function App() {
     }
   };
 
+  const togglePinned = async () => {
+    if (!selectedNote) return;
+    setLoading(true);
+    setError("");
+    try {
+      const nextPinned = !Boolean(selectedNote.pinned);
+      await setNotePinned(selectedNote.id, nextPinned);
+      await load();
+      setSelectedId(selectedNote.id);
+    } catch (e) {
+      setError(e?.message || "Failed to update pinned state.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="App">
       <div className="header">
@@ -249,37 +268,94 @@ function App() {
                     No notes found. Create one with “New note”.
                   </div>
                 ) : (
-                  notes.map((n) => (
-                    <div
-                      key={n.id}
-                      className={[
-                        "noteRow",
-                        selectedId === n.id ? "noteRowActive" : "",
-                      ].join(" ")}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setSelectedId(n.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") setSelectedId(n.id);
-                      }}
-                      aria-label={`Open note ${n.title}`}
-                    >
-                      <p className="noteTitle">{n.title}</p>
-                      <p className="noteExcerpt">{truncate(n.content, 120)}</p>
-                      {n.tags && n.tags.length > 0 ? (
-                        <div className="tagLine" aria-label="Tags">
-                          {n.tags.slice(0, 6).map((t) => (
-                            <span key={t} className="tag">
-                              {t}
-                            </span>
-                          ))}
-                          {n.tags.length > 6 ? (
-                            <span className="tag">+{n.tags.length - 6}</span>
-                          ) : null}
+                  <>
+                    {pinnedNotes.length > 0 ? (
+                      <div className="listSection" aria-label="Pinned notes section">
+                        <div className="listSectionHeader">
+                          <span className="listSectionTitle">Pinned</span>
+                          <span className="listSectionCount">{pinnedNotes.length}</span>
+                        </div>
+                        {pinnedNotes.map((n) => (
+                          <div
+                            key={n.id}
+                            className={[
+                              "noteRow",
+                              "noteRowPinned",
+                              selectedId === n.id ? "noteRowActive" : "",
+                            ].join(" ")}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setSelectedId(n.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") setSelectedId(n.id);
+                            }}
+                            aria-label={`Open pinned note ${n.title}`}
+                          >
+                            <div className="noteTitleRow">
+                              <p className="noteTitle">{n.title}</p>
+                              <span className="pinBadge" aria-label="Pinned">
+                                Pinned
+                              </span>
+                            </div>
+                            <p className="noteExcerpt">{truncate(n.content, 120)}</p>
+                            {n.tags && n.tags.length > 0 ? (
+                              <div className="tagLine" aria-label="Tags">
+                                {n.tags.slice(0, 6).map((t) => (
+                                  <span key={t} className="tag">
+                                    {t}
+                                  </span>
+                                ))}
+                                {n.tags.length > 6 ? (
+                                  <span className="tag">+{n.tags.length - 6}</span>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    <div className="listSection" aria-label="All notes section">
+                      {pinnedNotes.length > 0 ? (
+                        <div className="listSectionHeader">
+                          <span className="listSectionTitle">All notes</span>
+                          <span className="listSectionCount">{otherNotes.length}</span>
                         </div>
                       ) : null}
+
+                      {otherNotes.map((n) => (
+                        <div
+                          key={n.id}
+                          className={[
+                            "noteRow",
+                            selectedId === n.id ? "noteRowActive" : "",
+                          ].join(" ")}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setSelectedId(n.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") setSelectedId(n.id);
+                          }}
+                          aria-label={`Open note ${n.title}`}
+                        >
+                          <p className="noteTitle">{n.title}</p>
+                          <p className="noteExcerpt">{truncate(n.content, 120)}</p>
+                          {n.tags && n.tags.length > 0 ? (
+                            <div className="tagLine" aria-label="Tags">
+                              {n.tags.slice(0, 6).map((t) => (
+                                <span key={t} className="tag">
+                                  {t}
+                                </span>
+                              ))}
+                              {n.tags.length > 6 ? (
+                                <span className="tag">+{n.tags.length - 6}</span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
                     </div>
-                  ))
+                  </>
                 )}
               </div>
             </section>
@@ -293,6 +369,15 @@ function App() {
                   </p>
                 </div>
                 <div className="actions">
+                  <button
+                    className="btn"
+                    onClick={togglePinned}
+                    disabled={!selectedNote || loading}
+                    aria-label={selectedNote && selectedNote.pinned ? "Unpin note" : "Pin note"}
+                    title={selectedNote && selectedNote.pinned ? "Unpin" : "Pin"}
+                  >
+                    {selectedNote && selectedNote.pinned ? "Unpin" : "Pin"}
+                  </button>
                   <button className="btn" onClick={openEdit} disabled={!selectedNote || loading}>
                     Edit
                   </button>

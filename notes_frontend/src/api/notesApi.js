@@ -55,16 +55,23 @@ export async function createNote({ title, content, tags }) {
 }
 
 // PUBLIC_INTERFACE
-export async function updateNote(id, { title, content, tags }) {
+export async function updateNote(id, { title, content, tags, pinned }) {
   /** Patch update a note. Provide tags to replace existing tags. */
   const payload = {};
   if (title !== undefined) payload.title = title;
   if (content !== undefined) payload.content = content;
   if (tags !== undefined) payload.tags = tags;
+  if (pinned !== undefined) payload.pinned = pinned;
   return request(`/notes/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+// PUBLIC_INTERFACE
+export async function setNotePinned(id, pinned) {
+  /** Pin or unpin a note by id. */
+  return updateNote(id, { pinned: Boolean(pinned) });
 }
 
 // PUBLIC_INTERFACE
