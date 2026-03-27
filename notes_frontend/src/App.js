@@ -1,6 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import { createNote, deleteNote, listNotes, setNotePinned, setNoteStarred, updateNote } from "./api/notesApi";
+import {
+  bulkAddTags,
+  bulkDeleteNotes,
+  bulkRemoveTags,
+  createNote,
+  deleteNote,
+  listNotes,
+  setNotePinned,
+  setNoteStarred,
+  updateNote,
+} from "./api/notesApi";
 import { createTag, deleteTag, listTags, renameTag } from "./api/tagsApi";
 
 function formatDate(iso) {
@@ -113,6 +123,11 @@ function App() {
 
   const [selectedId, setSelectedId] = useState(null);
 
+  // Bulk selection state
+  const [multiSelect, setMultiSelect] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set()); // Set<number>
+  const [bulkTagInput, setBulkTagInput] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -179,6 +194,17 @@ function App() {
         if (!prev) return first;
         const stillThere = (items || []).some((n) => n.id === prev);
         return stillThere ? prev : first;
+      });
+
+      // If multi-select is enabled, prune selectedIds that no longer exist.
+      setSelectedIds((prev) => {
+        if (!multiSelect) return prev;
+        const existing = new Set((items || []).map((n) => n.id));
+        const next = new Set();
+        prev.forEach((id) => {
+          if (existing.has(id)) next.add(id);
+        });
+        return next;
       });
     } catch (e) {
       setError(e?.message || "Failed to load notes.");
@@ -302,6 +328,98 @@ function App() {
       await Promise.all([loadNotes(), loadTags()]);
     } catch (e) {
       setError(e?.message || "Delete failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const selectedIdsArray = useMemo(() => Array.from(selectedIds), [selectedIds]);
+  const selectedCount = selectedIds.size;
+
+  const toggleMultiSelect = () => {
+    setMultiSelect((v) => {
+      const next = !v;
+      if (!next) setSelectedIds(new Set());
+      return next;
+    });
+  };
+
+  const toggleIdSelected = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    setSelectedIds(new Set((notes || []).map((n) => n.id)));
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const doBulkDelete = async () => {
+    if (selectedCount === 0) return;
+
+    // eslint-disable-next-line no-alert
+    const ok = window.confirm(`Delete ${selectedCount} selected note(s)? This cannot be undone.`);
+    if (!ok) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      const res = await bulkDeleteNotes(selectedIdsArray);
+      const notFound = res?.not_found_ids?.length ? ` (${res.not_found_ids.length} not found)` : "";
+      await Promise.all([loadNotes(), loadTags()]);
+      setSelectedIds(new Set());
+      setError(res?.deleted_ids?.length ? "" : `No notes deleted${notFound}.`);
+    } catch (e) {
+      setError(e?.message || "Bulk delete failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const doBulkAddTags = async () => {
+    const tagsList = parseTagsInput(bulkTagInput);
+    if (selectedCount === 0) return;
+    if (tagsList.length === 0) {
+      setError("Enter at least one tag to add.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      await bulkAddTags(selectedIdsArray, tagsList);
+      await Promise.all([loadNotes(), loadTags()]);
+      setBulkTagInput("");
+      setSelectedIds(new Set());
+    } catch (e) {
+      setError(e?.message || "Bulk add tags failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const doBulkRemoveTags = async () => {
+    const tagsList = parseTagsInput(bulkTagInput);
+    if (selectedCount === 0) return;
+    if (tagsList.length === 0) {
+      setError("Enter at least one tag to remove.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      await bulkRemoveTags(selectedIdsArray, tagsList);
+      await Promise.all([loadNotes(), loadTags()]);
+      setBulkTagInput("");
+      setSelectedIds(new Set());
+    } catch (e) {
+      setError(e?.message || "Bulk remove tags failed.");
     } finally {
       setLoading(false);
     }
@@ -575,10 +693,61 @@ function App() {
                   <p className="panelTitle">Notes</p>
                   <p className="smallMuted">{loading ? "Loading…" : `${total} total`}</p>
                 </div>
-                <button className="btn" onClick={() => loadNotes()} disabled={loading}>
-                  Refresh
-                </button>
+
+                <div className="actions" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <button
+                    className={["btn", multiSelect ? "btnStarActive" : ""].join(" ")}
+                    type="button"
+                    onClick={toggleMultiSelect}
+                    disabled={loading}
+                    aria-pressed={multiSelect}
+                    title={multiSelect ? "Exit multi-select" : "Multi-select"}
+                  >
+                    {multiSelect ? `Multi-select: ${selectedCount}` : "Multi-select"}
+                  </button>
+
+                  {multiSelect ? (
+                    <>
+                      <button className="btn" type="button" onClick={selectAllVisible} disabled={loading || notes.length === 0}>
+                        Select all
+                      </button>
+                      <button className="btn" type="button" onClick={clearSelection} disabled={loading || selectedCount === 0}>
+                        Clear
+                      </button>
+                      <button className="btn btnDanger" type="button" onClick={doBulkDelete} disabled={loading || selectedCount === 0}>
+                        Delete selected
+                      </button>
+                    </>
+                  ) : null}
+
+                  <button className="btn" onClick={() => loadNotes()} disabled={loading}>
+                    Refresh
+                  </button>
+                </div>
               </div>
+
+              {multiSelect ? (
+                <div className="listSectionHeader" aria-label="Bulk tag actions">
+                  <span className="listSectionTitle">Bulk tags</span>
+                  <div className="actions" style={{ justifyContent: "flex-end", flexWrap: "wrap" }}>
+                    <input
+                      className="input"
+                      style={{ width: 240 }}
+                      value={bulkTagInput}
+                      onChange={(e) => setBulkTagInput(e.target.value)}
+                      placeholder="tag1, tag2"
+                      aria-label="Bulk tags input"
+                      disabled={loading}
+                    />
+                    <button className="btn btnPrimary" type="button" onClick={doBulkAddTags} disabled={loading || selectedCount === 0}>
+                      Add
+                    </button>
+                    <button className="btn" type="button" onClick={doBulkRemoveTags} disabled={loading || selectedCount === 0}>
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="list">
                 {notes.length === 0 ? (
@@ -591,27 +760,111 @@ function App() {
                           <span className="listSectionTitle">Pinned</span>
                           <span className="listSectionCount">{pinnedNotes.length}</span>
                         </div>
-                        {pinnedNotes.map((n) => (
+                        {pinnedNotes.map((n) => {
+                          const checked = selectedIds.has(n.id);
+                          return (
+                            <div
+                              key={n.id}
+                              className={[
+                                "noteRow",
+                                "noteRowPinned",
+                                selectedId === n.id ? "noteRowActive" : "",
+                                multiSelect && checked ? "noteRowSelected" : "",
+                              ].join(" ")}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => (multiSelect ? toggleIdSelected(n.id) : setSelectedId(n.id))}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  if (multiSelect) toggleIdSelected(n.id);
+                                  else setSelectedId(n.id);
+                                }
+                              }}
+                              aria-label={multiSelect ? `Select pinned note ${n.title}` : `Open pinned note ${n.title}`}
+                            >
+                              <div className="noteTitleRow">
+                                <p className="noteTitle" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                  {multiSelect ? (
+                                    <input
+                                      className="noteCheckbox"
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleIdSelected(n.id)}
+                                      onClick={(e) => e.stopPropagation()}
+                                      aria-label={`Select note ${n.title}`}
+                                    />
+                                  ) : null}
+                                  <span>
+                                    {n.starred ? <span className="starBadge" aria-label="Starred">★</span> : null}
+                                    {n.title}
+                                  </span>
+                                </p>
+                                <span className="pinBadge" aria-label="Pinned">
+                                  Pinned
+                                </span>
+                              </div>
+                              <p className="noteExcerpt">{truncate(n.content, 120)}</p>
+                              {n.tags && n.tags.length > 0 ? (
+                                <div className="tagLine" aria-label="Tags">
+                                  {n.tags.slice(0, 6).map((t) => (
+                                    <span key={t} className="tag">
+                                      {t}
+                                    </span>
+                                  ))}
+                                  {n.tags.length > 6 ? <span className="tag">+{n.tags.length - 6}</span> : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+
+                    <div className="listSection" aria-label="All notes section">
+                      {pinnedNotes.length > 0 ? (
+                        <div className="listSectionHeader">
+                          <span className="listSectionTitle">All notes</span>
+                          <span className="listSectionCount">{otherNotes.length}</span>
+                        </div>
+                      ) : null}
+
+                      {otherNotes.map((n) => {
+                        const checked = selectedIds.has(n.id);
+                        return (
                           <div
                             key={n.id}
-                            className={["noteRow", "noteRowPinned", selectedId === n.id ? "noteRowActive" : ""].join(" ")}
+                            className={[
+                              "noteRow",
+                              selectedId === n.id ? "noteRowActive" : "",
+                              multiSelect && checked ? "noteRowSelected" : "",
+                            ].join(" ")}
                             role="button"
                             tabIndex={0}
-                            onClick={() => setSelectedId(n.id)}
+                            onClick={() => (multiSelect ? toggleIdSelected(n.id) : setSelectedId(n.id))}
                             onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") setSelectedId(n.id);
+                              if (e.key === "Enter" || e.key === " ") {
+                                if (multiSelect) toggleIdSelected(n.id);
+                                else setSelectedId(n.id);
+                              }
                             }}
-                            aria-label={`Open pinned note ${n.title}`}
+                            aria-label={multiSelect ? `Select note ${n.title}` : `Open note ${n.title}`}
                           >
-                            <div className="noteTitleRow">
-                              <p className="noteTitle">
+                            <p className="noteTitle" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              {multiSelect ? (
+                                <input
+                                  className="noteCheckbox"
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleIdSelected(n.id)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  aria-label={`Select note ${n.title}`}
+                                />
+                              ) : null}
+                              <span>
                                 {n.starred ? <span className="starBadge" aria-label="Starred">★</span> : null}
                                 {n.title}
-                              </p>
-                              <span className="pinBadge" aria-label="Pinned">
-                                Pinned
                               </span>
-                            </div>
+                            </p>
                             <p className="noteExcerpt">{truncate(n.content, 120)}</p>
                             {n.tags && n.tags.length > 0 ? (
                               <div className="tagLine" aria-label="Tags">
@@ -624,47 +877,8 @@ function App() {
                               </div>
                             ) : null}
                           </div>
-                        ))}
-                      </div>
-                    ) : null}
-
-                    <div className="listSection" aria-label="All notes section">
-                      {pinnedNotes.length > 0 ? (
-                        <div className="listSectionHeader">
-                          <span className="listSectionTitle">All notes</span>
-                          <span className="listSectionCount">{otherNotes.length}</span>
-                        </div>
-                      ) : null}
-
-                      {otherNotes.map((n) => (
-                        <div
-                          key={n.id}
-                          className={["noteRow", selectedId === n.id ? "noteRowActive" : ""].join(" ")}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setSelectedId(n.id)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") setSelectedId(n.id);
-                          }}
-                          aria-label={`Open note ${n.title}`}
-                        >
-                          <p className="noteTitle">
-                            {n.starred ? <span className="starBadge" aria-label="Starred">★</span> : null}
-                            {n.title}
-                          </p>
-                          <p className="noteExcerpt">{truncate(n.content, 120)}</p>
-                          {n.tags && n.tags.length > 0 ? (
-                            <div className="tagLine" aria-label="Tags">
-                              {n.tags.slice(0, 6).map((t) => (
-                                <span key={t} className="tag">
-                                  {t}
-                                </span>
-                              ))}
-                              {n.tags.length > 6 ? <span className="tag">+{n.tags.length - 6}</span> : null}
-                            </div>
-                          ) : null}
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </>
                 )}

@@ -212,6 +212,18 @@
   background: rgba(6, 182, 212, 0.08);
 }
 
+.noteRowSelected {
+  outline: 2px solid rgba(59, 130, 246, 0.35);
+  outline-offset: -2px;
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.noteCheckbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+
 .noteTitle {
   margin: 0;
   font-size: 14px;

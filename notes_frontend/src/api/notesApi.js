@@ -106,3 +106,30 @@ export async function deleteNote(id) {
   /** Delete a note by id. */
   return request(`/notes/${id}`, { method: "DELETE" });
 }
+
+// PUBLIC_INTERFACE
+export async function bulkDeleteNotes(noteIds) {
+  /** Bulk delete notes by ids. */
+  return request("/notes/bulk/delete", {
+    method: "POST",
+    body: JSON.stringify({ note_ids: noteIds || [] }),
+  });
+}
+
+// PUBLIC_INTERFACE
+export async function bulkAddTags(noteIds, tags) {
+  /** Bulk add tags to notes by ids. */
+  return request("/notes/bulk/tags/add", {
+    method: "POST",
+    body: JSON.stringify({ note_ids: noteIds || [], tags: tags || [] }),
+  });
+}
+
+// PUBLIC_INTERFACE
+export async function bulkRemoveTags(noteIds, tags) {
+  /** Bulk remove tags from notes by ids. */
+  return request("/notes/bulk/tags/remove", {
+    method: "POST",
+    body: JSON.stringify({ note_ids: noteIds || [], tags: tags || [] }),
+  });
+}
