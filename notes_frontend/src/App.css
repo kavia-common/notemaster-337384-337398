@@ -295,6 +295,19 @@
   color: rgba(185, 28, 28, 0.95);
 }
 
+.btnStarActive {
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  background: rgba(234, 179, 8, 0.12);
+  color: rgba(161, 98, 7, 0.95);
+}
+
+.starBadge {
+  display: inline-block;
+  margin-right: 8px;
+  color: rgba(234, 179, 8, 0.95);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+}
+
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;

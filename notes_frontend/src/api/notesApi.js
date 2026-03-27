@@ -35,9 +35,9 @@ async function request(path, options = {}) {
 }
 
 // PUBLIC_INTERFACE
-export async function listNotes({ q, tag, tags, limit = 50, offset = 0 }) {
+export async function listNotes({ q, tag, tags, starred, limit = 50, offset = 0 }) {
   /**
-   * List notes with optional search and tag filter(s).
+   * List notes with optional search, tag filter(s), and starred filter.
    *
    * Contract:
    * - Provide either `tag` (single) or `tags` (array of tag names). If both are provided,
@@ -45,6 +45,8 @@ export async function listNotes({ q, tag, tags, limit = 50, offset = 0 }) {
    * - Backend expects:
    *   - `tag=<name>` for single tag (legacy)
    *   - `tags=<comma-separated>` for multi-select tags (AND match)
+   * - Starred filter:
+   *   - `starred=true` to show only starred notes
    */
   const params = new URLSearchParams();
   if (q) params.set("q", q);
@@ -55,6 +57,8 @@ export async function listNotes({ q, tag, tags, limit = 50, offset = 0 }) {
   } else if (tag) {
     params.set("tag", tag);
   }
+
+  if (starred === true) params.set("starred", "true");
 
   params.set("limit", String(limit));
   params.set("offset", String(offset));
@@ -71,13 +75,14 @@ export async function createNote({ title, content, tags }) {
 }
 
 // PUBLIC_INTERFACE
-export async function updateNote(id, { title, content, tags, pinned }) {
+export async function updateNote(id, { title, content, tags, pinned, starred }) {
   /** Patch update a note. Provide tags to replace existing tags. */
   const payload = {};
   if (title !== undefined) payload.title = title;
   if (content !== undefined) payload.content = content;
   if (tags !== undefined) payload.tags = tags;
   if (pinned !== undefined) payload.pinned = pinned;
+  if (starred !== undefined) payload.starred = starred;
   return request(`/notes/${id}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
@@ -88,6 +93,12 @@ export async function updateNote(id, { title, content, tags, pinned }) {
 export async function setNotePinned(id, pinned) {
   /** Pin or unpin a note by id. */
   return updateNote(id, { pinned: Boolean(pinned) });
+}
+
+// PUBLIC_INTERFACE
+export async function setNoteStarred(id, starred) {
+  /** Star or unstar (favorite) a note by id. */
+  return updateNote(id, { starred: Boolean(starred) });
 }
 
 // PUBLIC_INTERFACE

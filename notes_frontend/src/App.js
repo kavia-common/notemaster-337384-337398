@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import { createNote, deleteNote, listNotes, setNotePinned, updateNote } from "./api/notesApi";
+import { createNote, deleteNote, listNotes, setNotePinned, setNoteStarred, updateNote } from "./api/notesApi";
 import { createTag, deleteTag, listTags, renameTag } from "./api/tagsApi";
 
 function formatDate(iso) {
@@ -106,6 +106,7 @@ function App() {
 
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState(NOTE_SORT.updated.key);
+  const [starredOnly, setStarredOnly] = useState(false);
 
   const [rawNotes, setRawNotes] = useState([]);
   const [total, setTotal] = useState(0);
@@ -154,13 +155,14 @@ function App() {
     }
   };
 
-  const loadNotes = async ({ q, tags: tagsArg } = {}) => {
+  const loadNotes = async ({ q, tags: tagsArg, starred } = {}) => {
     setLoading(true);
     setError("");
     try {
       const data = await listNotes({
         q: q ?? query,
         tags: tagsArg ?? selectedTags,
+        starred: starred ?? starredOnly,
         limit: 100,
         offset: 0,
       });
@@ -197,7 +199,7 @@ function App() {
     // Debounced search to avoid excessive calls.
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     searchDebounceRef.current = setTimeout(() => {
-      loadNotes({ q: value });
+      loadNotes({ q: value, starred: starredOnly });
     }, 250);
   };
 
@@ -223,7 +225,13 @@ function App() {
 
   const clearTagFilter = async () => {
     setSelectedTags([]);
-    await loadNotes({ tags: [] });
+    await loadNotes({ tags: [], starred: starredOnly });
+  };
+
+  const toggleStarredOnly = async () => {
+    const next = !starredOnly;
+    setStarredOnly(next);
+    await loadNotes({ starred: next });
   };
 
   const openCreate = () => {
@@ -310,6 +318,22 @@ function App() {
       setSelectedId(selectedNote.id);
     } catch (e) {
       setError(e?.message || "Failed to update pinned state.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleStarred = async () => {
+    if (!selectedNote) return;
+    setLoading(true);
+    setError("");
+    try {
+      const nextStarred = !Boolean(selectedNote.starred);
+      await setNoteStarred(selectedNote.id, nextStarred);
+      await loadNotes();
+      setSelectedId(selectedNote.id);
+    } catch (e) {
+      setError(e?.message || "Failed to update starred state.");
     } finally {
       setLoading(false);
     }
@@ -455,6 +479,21 @@ function App() {
                 </button>
               </div>
 
+              <div className="pill" aria-label="Starred filter">
+                <span style={{ fontWeight: 800 }}>Starred</span>
+                <button
+                  className={["btn", "btnSmall", starredOnly ? "btnStarActive" : ""].join(" ")}
+                  type="button"
+                  onClick={toggleStarredOnly}
+                  disabled={loading}
+                  aria-pressed={starredOnly}
+                  aria-label={starredOnly ? "Show all notes" : "Show only starred notes"}
+                  title={starredOnly ? "Showing starred only (click to show all)" : "Show starred only"}
+                >
+                  {starredOnly ? "On" : "Off"}
+                </button>
+              </div>
+
               <div className="pill" aria-label="Sort notes">
                 <span style={{ fontWeight: 700 }}>Sort</span>
                 <select
@@ -565,7 +604,10 @@ function App() {
                             aria-label={`Open pinned note ${n.title}`}
                           >
                             <div className="noteTitleRow">
-                              <p className="noteTitle">{n.title}</p>
+                              <p className="noteTitle">
+                                {n.starred ? <span className="starBadge" aria-label="Starred">★</span> : null}
+                                {n.title}
+                              </p>
                               <span className="pinBadge" aria-label="Pinned">
                                 Pinned
                               </span>
@@ -606,7 +648,10 @@ function App() {
                           }}
                           aria-label={`Open note ${n.title}`}
                         >
-                          <p className="noteTitle">{n.title}</p>
+                          <p className="noteTitle">
+                            {n.starred ? <span className="starBadge" aria-label="Starred">★</span> : null}
+                            {n.title}
+                          </p>
                           <p className="noteExcerpt">{truncate(n.content, 120)}</p>
                           {n.tags && n.tags.length > 0 ? (
                             <div className="tagLine" aria-label="Tags">
@@ -633,6 +678,15 @@ function App() {
                   <p className="smallMuted">{selectedNote ? `ID ${selectedNote.id}` : "Select a note"}</p>
                 </div>
                 <div className="actions">
+                  <button
+                    className={["btn", selectedNote && selectedNote.starred ? "btnStarActive" : ""].join(" ")}
+                    onClick={toggleStarred}
+                    disabled={!selectedNote || loading}
+                    aria-label={selectedNote && selectedNote.starred ? "Unstar note" : "Star note"}
+                    title={selectedNote && selectedNote.starred ? "Unstar" : "Star"}
+                  >
+                    {selectedNote && selectedNote.starred ? "★ Starred" : "☆ Star"}
+                  </button>
                   <button
                     className="btn"
                     onClick={togglePinned}
