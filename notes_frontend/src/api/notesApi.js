@@ -35,11 +35,27 @@ async function request(path, options = {}) {
 }
 
 // PUBLIC_INTERFACE
-export async function listNotes({ q, tag, limit = 50, offset = 0 }) {
-  /** List notes with optional search and tag filter. */
+export async function listNotes({ q, tag, tags, limit = 50, offset = 0 }) {
+  /**
+   * List notes with optional search and tag filter(s).
+   *
+   * Contract:
+   * - Provide either `tag` (single) or `tags` (array of tag names). If both are provided,
+   *   `tags` takes precedence.
+   * - Backend expects:
+   *   - `tag=<name>` for single tag (legacy)
+   *   - `tags=<comma-separated>` for multi-select tags (AND match)
+   */
   const params = new URLSearchParams();
   if (q) params.set("q", q);
-  if (tag) params.set("tag", tag);
+
+  const tagList = Array.isArray(tags) ? tags.filter(Boolean) : [];
+  if (tagList.length > 0) {
+    params.set("tags", tagList.join(","));
+  } else if (tag) {
+    params.set("tag", tag);
+  }
+
   params.set("limit", String(limit));
   params.set("offset", String(offset));
   return request(`/notes?${params.toString()}`, { method: "GET" });

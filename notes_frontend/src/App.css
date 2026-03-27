@@ -405,11 +405,105 @@
   font-size: 13px;
 }
 
+.btnSmall {
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.tagFilterPanel {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(229, 231, 235, 0.85);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: var(--shadow-sm);
+}
+
+.tagFilterHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.tagChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tagChip {
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  background: rgba(59, 130, 246, 0.10);
+  color: rgba(30, 64, 175, 0.92);
+  padding: 8px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.tagChip:hover {
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.tagChipActive {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.22), rgba(6, 182, 212, 0.18));
+  border-color: rgba(6, 182, 212, 0.28);
+  color: rgba(17, 24, 39, 0.92);
+}
+
+.rowBetween {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.tagsTable {
+  display: grid;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.tagsRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(229, 231, 235, 0.85);
+  border-radius: 12px;
+  background: rgba(249, 250, 251, 0.7);
+}
+
+.tagName {
+  font-weight: 800;
+  color: rgba(17, 24, 39, 0.9);
+}
+
+.tagsActions {
+  display: inline-flex;
+  gap: 8px;
+}
+
 @media (max-width: 920px) {
   .grid {
     grid-template-columns: 1fr;
   }
   .brand {
     min-width: unset;
+  }
+  .rowBetween {
+    grid-template-columns: 1fr;
+  }
+  .tagsRow {
+    grid-template-columns: 1fr;
+  }
+  .tagsActions {
+    justify-content: flex-end;
   }
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { createNote, deleteNote, listNotes, setNotePinned, updateNote } from "./api/notesApi";
+import { createTag, deleteTag, listTags, renameTag } from "./api/tagsApi";
 
 function formatDate(iso) {
   try {
@@ -23,12 +24,6 @@ function parseTagsInput(value) {
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
-}
-
-function uniqueSortedTagsFromNotes(notes) {
-  const set = new Set();
-  notes.forEach((n) => (n.tags || []).forEach((t) => set.add(t)));
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -98,12 +93,18 @@ function sortNotesFlow(notes, sortKey) {
   return toSorted(notes || []);
 }
 
+function normalizeTagNameUi(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 // PUBLIC_INTERFACE
 function App() {
   /** NoteMaster application root component. */
 
   const [query, setQuery] = useState("");
-  const [tagFilter, setTagFilter] = useState("");
   const [sortKey, setSortKey] = useState(NOTE_SORT.updated.key);
 
   const [rawNotes, setRawNotes] = useState([]);
@@ -114,31 +115,56 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Notes create/edit modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState("create"); // create | edit
   const [draftTitle, setDraftTitle] = useState("");
   const [draftContent, setDraftContent] = useState("");
   const [draftTags, setDraftTags] = useState("");
 
+  // Tags management + filtering state
+  const [tagsModalOpen, setTagsModalOpen] = useState(false);
+  const [tagsLoading, setTagsLoading] = useState(false);
+  const [tagsError, setTagsError] = useState("");
+  const [tags, setTags] = useState([]); // [{id,name,created_at}]
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [selectedTags, setSelectedTags] = useState([]); // array of tag names
+
   const searchDebounceRef = useRef(null);
 
   const notes = useMemo(() => sortNotesFlow(rawNotes, sortKey), [rawNotes, sortKey]);
 
-  const selectedNote = useMemo(
-    () => notes.find((n) => n.id === selectedId) || null,
-    [notes, selectedId]
-  );
-
-  const availableTags = useMemo(() => uniqueSortedTagsFromNotes(rawNotes), [rawNotes]);
+  const selectedNote = useMemo(() => notes.find((n) => n.id === selectedId) || null, [notes, selectedId]);
 
   const pinnedNotes = useMemo(() => notes.filter((n) => Boolean(n.pinned)), [notes]);
   const otherNotes = useMemo(() => notes.filter((n) => !Boolean(n.pinned)), [notes]);
 
-  const load = async ({ q, tag } = {}) => {
+  const selectedTagsSet = useMemo(() => new Set(selectedTags), [selectedTags]);
+
+  const loadTags = async () => {
+    setTagsLoading(true);
+    setTagsError("");
+    try {
+      const data = await listTags();
+      setTags((data.items || []).slice().sort((a, b) => compareStrings(a?.name, b?.name)));
+    } catch (e) {
+      setTagsError(e?.message || "Failed to load tags.");
+    } finally {
+      setTagsLoading(false);
+    }
+  };
+
+  const loadNotes = async ({ q, tags: tagsArg } = {}) => {
     setLoading(true);
     setError("");
     try {
-      const data = await listNotes({ q: q ?? query, tag: tag ?? tagFilter, limit: 100, offset: 0 });
+      const data = await listNotes({
+        q: q ?? query,
+        tags: tagsArg ?? selectedTags,
+        limit: 100,
+        offset: 0,
+      });
+
       const items = data.items || [];
       setRawNotes(items);
       setTotal(data.total || 0);
@@ -160,7 +186,8 @@ function App() {
   };
 
   useEffect(() => {
-    load();
+    loadNotes();
+    loadTags();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -170,13 +197,8 @@ function App() {
     // Debounced search to avoid excessive calls.
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     searchDebounceRef.current = setTimeout(() => {
-      load({ q: value });
+      loadNotes({ q: value });
     }, 250);
-  };
-
-  const onChangeTagFilter = (value) => {
-    setTagFilter(value);
-    load({ tag: value });
   };
 
   const onChangeSort = (value) => {
@@ -189,6 +211,19 @@ function App() {
       const sorted = sortNotesFlow(rawNotes, value);
       return (sorted[0] && sorted[0].id) || null;
     });
+  };
+
+  const toggleTagSelected = async (tagName) => {
+    const t = normalizeTagNameUi(tagName);
+    const next = selectedTagsSet.has(t) ? selectedTags.filter((x) => x !== t) : [...selectedTags, t].sort(compareStrings);
+    setSelectedTags(next);
+    setTagPickerOpen(true); // keep open for quick multi-select
+    await loadNotes({ tags: next });
+  };
+
+  const clearTagFilter = async () => {
+    setSelectedTags([]);
+    await loadNotes({ tags: [] });
   };
 
   const openCreate = () => {
@@ -213,7 +248,7 @@ function App() {
   const saveDraft = async () => {
     const title = draftTitle.trim();
     const content = draftContent;
-    const tags = parseTagsInput(draftTags);
+    const tagsList = parseTagsInput(draftTags);
 
     if (!title) {
       setError("Title is required.");
@@ -229,12 +264,12 @@ function App() {
 
     try {
       if (modalMode === "create") {
-        const created = await createNote({ title, content, tags });
-        await load();
+        const created = await createNote({ title, content, tags: tagsList });
+        await Promise.all([loadNotes(), loadTags()]);
         setSelectedId(created.id);
       } else if (modalMode === "edit" && selectedNote) {
-        const updated = await updateNote(selectedNote.id, { title, content, tags });
-        await load();
+        const updated = await updateNote(selectedNote.id, { title, content, tags: tagsList });
+        await Promise.all([loadNotes(), loadTags()]);
         setSelectedId(updated.id);
       }
       setModalOpen(false);
@@ -256,7 +291,7 @@ function App() {
     setError("");
     try {
       await deleteNote(selectedNote.id);
-      await load();
+      await Promise.all([loadNotes(), loadTags()]);
     } catch (e) {
       setError(e?.message || "Delete failed.");
     } finally {
@@ -271,12 +306,94 @@ function App() {
     try {
       const nextPinned = !Boolean(selectedNote.pinned);
       await setNotePinned(selectedNote.id, nextPinned);
-      await load();
+      await loadNotes();
       setSelectedId(selectedNote.id);
     } catch (e) {
       setError(e?.message || "Failed to update pinned state.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openTagsManager = async () => {
+    setTagsModalOpen(true);
+    await loadTags();
+  };
+
+  const closeTagsManager = () => setTagsModalOpen(false);
+
+  const doCreateTag = async (name) => {
+    const n = normalizeTagNameUi(name);
+    if (!n) {
+      setTagsError("Tag name is required.");
+      return;
+    }
+
+    setTagsLoading(true);
+    setTagsError("");
+    try {
+      await createTag({ name: n });
+      await Promise.all([loadTags(), loadNotes()]);
+    } catch (e) {
+      setTagsError(e?.message || "Failed to create tag.");
+    } finally {
+      setTagsLoading(false);
+    }
+  };
+
+  const doRenameTag = async (tagId, name) => {
+    const n = normalizeTagNameUi(name);
+    if (!n) {
+      setTagsError("Tag name is required.");
+      return;
+    }
+
+    setTagsLoading(true);
+    setTagsError("");
+    try {
+      await renameTag(tagId, { name: n });
+
+      // If user renamed a tag that is currently selected in filter, update filter selection.
+      setSelectedTags((prev) => {
+        const old = tags.find((t) => t.id === tagId)?.name;
+        if (!old) return prev;
+        const normOld = normalizeTagNameUi(old);
+        const has = prev.includes(normOld);
+        if (!has) return prev;
+        const next = prev.filter((x) => x !== normOld).concat([n]);
+        return Array.from(new Set(next)).sort(compareStrings);
+      });
+
+      await Promise.all([loadTags(), loadNotes()]);
+    } catch (e) {
+      setTagsError(e?.message || "Failed to rename tag.");
+    } finally {
+      setTagsLoading(false);
+    }
+  };
+
+  const doDeleteTag = async (tagId) => {
+    // eslint-disable-next-line no-alert
+    const ok = window.confirm("Delete this tag? It will be removed from all notes.");
+    if (!ok) return;
+
+    setTagsLoading(true);
+    setTagsError("");
+    try {
+      const old = tags.find((t) => t.id === tagId)?.name;
+      await deleteTag(tagId);
+
+      // Remove from selected filter if needed.
+      if (old) {
+        const normOld = normalizeTagNameUi(old);
+        setSelectedTags((prev) => prev.filter((x) => x !== normOld));
+      }
+
+      await Promise.all([loadTags(), loadNotes()]);
+    } catch (e) {
+      setTagsError(e?.message || "Failed to delete tag.");
+    } finally {
+      setTagsLoading(false);
     }
   };
 
@@ -299,28 +416,43 @@ function App() {
                 aria-label="Search notes"
               />
 
-              <div className="pill" aria-label="Tag filter">
-                <span style={{ fontWeight: 700 }}>Tag</span>
-                <select
-                  value={tagFilter}
-                  onChange={(e) => onChangeTagFilter(e.target.value)}
-                  style={{
-                    border: "none",
-                    outline: "none",
-                    background: "transparent",
-                    color: "inherit",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                  aria-label="Filter by tag"
+              <div className="pill" aria-label="Tags filter">
+                <span style={{ fontWeight: 800 }}>Tags</span>
+
+                <button
+                  className="btn btnSmall"
+                  type="button"
+                  onClick={() => setTagPickerOpen((v) => !v)}
+                  disabled={loading}
+                  aria-label="Open tags filter"
+                  title="Filter by tags"
                 >
-                  <option value="">All</option>
-                  {availableTags.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
+                  {selectedTags.length === 0 ? "All" : `${selectedTags.length} selected`}
+                </button>
+
+                {selectedTags.length > 0 ? (
+                  <button
+                    className="btn btnSmall"
+                    type="button"
+                    onClick={clearTagFilter}
+                    disabled={loading}
+                    aria-label="Clear tag filters"
+                    title="Clear filters"
+                  >
+                    Clear
+                  </button>
+                ) : null}
+
+                <button
+                  className="btn btnSmall"
+                  type="button"
+                  onClick={openTagsManager}
+                  disabled={loading}
+                  aria-label="Manage tags"
+                  title="Manage tags"
+                >
+                  Manage
+                </button>
               </div>
 
               <div className="pill" aria-label="Sort notes">
@@ -352,6 +484,45 @@ function App() {
             </div>
           </div>
 
+          {tagPickerOpen ? (
+            <div className="tagFilterPanel" role="region" aria-label="Tag filter panel">
+              <div className="tagFilterHeader">
+                <div className="smallMuted">
+                  {selectedTags.length === 0
+                    ? "Select one or more tags (AND match)."
+                    : `Filtering by: ${selectedTags.join(", ")}`}
+                </div>
+                <button className="btn btnSmall" type="button" onClick={() => setTagPickerOpen(false)}>
+                  Close
+                </button>
+              </div>
+
+              {tagsLoading ? (
+                <div className="emptyState">Loading tags…</div>
+              ) : tags.length === 0 ? (
+                <div className="emptyState">No tags yet. Use “Manage” to create one.</div>
+              ) : (
+                <div className="tagChips" aria-label="Available tags">
+                  {tags.map((t) => {
+                    const active = selectedTagsSet.has(normalizeTagNameUi(t.name));
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className={["tagChip", active ? "tagChipActive" : ""].join(" ")}
+                        onClick={() => toggleTagSelected(t.name)}
+                        aria-pressed={active}
+                        aria-label={`Filter by tag ${t.name}`}
+                      >
+                        {t.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
+
           {error ? <div className="errorBanner">{error}</div> : null}
         </div>
       </div>
@@ -363,20 +534,16 @@ function App() {
               <div className="panelHeader">
                 <div>
                   <p className="panelTitle">Notes</p>
-                  <p className="smallMuted">
-                    {loading ? "Loading…" : `${total} total`}
-                  </p>
+                  <p className="smallMuted">{loading ? "Loading…" : `${total} total`}</p>
                 </div>
-                <button className="btn" onClick={() => load()} disabled={loading}>
+                <button className="btn" onClick={() => loadNotes()} disabled={loading}>
                   Refresh
                 </button>
               </div>
 
               <div className="list">
                 {notes.length === 0 ? (
-                  <div className="emptyState">
-                    No notes found. Create one with “New note”.
-                  </div>
+                  <div className="emptyState">No notes found. Create one with “New note”.</div>
                 ) : (
                   <>
                     {pinnedNotes.length > 0 ? (
@@ -388,11 +555,7 @@ function App() {
                         {pinnedNotes.map((n) => (
                           <div
                             key={n.id}
-                            className={[
-                              "noteRow",
-                              "noteRowPinned",
-                              selectedId === n.id ? "noteRowActive" : "",
-                            ].join(" ")}
+                            className={["noteRow", "noteRowPinned", selectedId === n.id ? "noteRowActive" : ""].join(" ")}
                             role="button"
                             tabIndex={0}
                             onClick={() => setSelectedId(n.id)}
@@ -415,9 +578,7 @@ function App() {
                                     {t}
                                   </span>
                                 ))}
-                                {n.tags.length > 6 ? (
-                                  <span className="tag">+{n.tags.length - 6}</span>
-                                ) : null}
+                                {n.tags.length > 6 ? <span className="tag">+{n.tags.length - 6}</span> : null}
                               </div>
                             ) : null}
                           </div>
@@ -436,10 +597,7 @@ function App() {
                       {otherNotes.map((n) => (
                         <div
                           key={n.id}
-                          className={[
-                            "noteRow",
-                            selectedId === n.id ? "noteRowActive" : "",
-                          ].join(" ")}
+                          className={["noteRow", selectedId === n.id ? "noteRowActive" : ""].join(" ")}
                           role="button"
                           tabIndex={0}
                           onClick={() => setSelectedId(n.id)}
@@ -457,9 +615,7 @@ function App() {
                                   {t}
                                 </span>
                               ))}
-                              {n.tags.length > 6 ? (
-                                <span className="tag">+{n.tags.length - 6}</span>
-                              ) : null}
+                              {n.tags.length > 6 ? <span className="tag">+{n.tags.length - 6}</span> : null}
                             </div>
                           ) : null}
                         </div>
@@ -474,9 +630,7 @@ function App() {
               <div className="panelHeader">
                 <div>
                   <p className="panelTitle">Details</p>
-                  <p className="smallMuted">
-                    {selectedNote ? `ID ${selectedNote.id}` : "Select a note"}
-                  </p>
+                  <p className="smallMuted">{selectedNote ? `ID ${selectedNote.id}` : "Select a note"}</p>
                 </div>
                 <div className="actions">
                   <button
@@ -491,11 +645,7 @@ function App() {
                   <button className="btn" onClick={openEdit} disabled={!selectedNote || loading}>
                     Edit
                   </button>
-                  <button
-                    className="btn btnDanger"
-                    onClick={doDelete}
-                    disabled={!selectedNote || loading}
-                  >
+                  <button className="btn btnDanger" onClick={doDelete} disabled={!selectedNote || loading}>
                     Delete
                   </button>
                 </div>
@@ -586,6 +736,149 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      {tagsModalOpen ? (
+        <TagsManagerModal
+          loading={tagsLoading}
+          error={tagsError}
+          tags={tags}
+          onClose={closeTagsManager}
+          onCreate={doCreateTag}
+          onRename={doRenameTag}
+          onDelete={doDeleteTag}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function TagsManagerModal({ loading, error, tags, onClose, onCreate, onRename, onDelete }) {
+  const [newName, setNewName] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editName, setEditName] = useState("");
+
+  const startEdit = (tag) => {
+    setEditId(tag.id);
+    setEditName(tag.name);
+  };
+
+  const cancelEdit = () => {
+    setEditId(null);
+    setEditName("");
+  };
+
+  return (
+    <div
+      className="backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Manage tags"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="modal">
+        <div className="modalHeader">
+          <p className="modalTitle">Manage tags</p>
+          <button className="btn" onClick={onClose} disabled={loading}>
+            Close
+          </button>
+        </div>
+
+        <div className="modalBody">
+          <div className="rowBetween">
+            <input
+              className="input"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="New tag name (e.g. work)"
+              aria-label="New tag name"
+            />
+            <button
+              className="btn btnPrimary"
+              type="button"
+              onClick={() => {
+                const v = newName;
+                setNewName("");
+                onCreate(v);
+              }}
+              disabled={loading}
+            >
+              Create
+            </button>
+          </div>
+
+          {error ? <div className="errorBanner">{error}</div> : null}
+
+          {tags.length === 0 ? (
+            <div className="emptyState">No tags created yet.</div>
+          ) : (
+            <div className="tagsTable" role="table" aria-label="Tags list">
+              {tags.map((t) => {
+                const editing = editId === t.id;
+                return (
+                  <div className="tagsRow" key={t.id} role="row">
+                    <div className="tagsCell" role="cell">
+                      {editing ? (
+                        <input
+                          className="input"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          aria-label={`Edit tag ${t.name}`}
+                        />
+                      ) : (
+                        <span className="tagName">{t.name}</span>
+                      )}
+                    </div>
+
+                    <div className="tagsActions" role="cell">
+                      {editing ? (
+                        <>
+                          <button
+                            className="btn btnSmall btnPrimary"
+                            type="button"
+                            onClick={() => {
+                              const name = editName;
+                              cancelEdit();
+                              onRename(t.id, name);
+                            }}
+                            disabled={loading}
+                          >
+                            Save
+                          </button>
+                          <button className="btn btnSmall" type="button" onClick={cancelEdit} disabled={loading}>
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="btn btnSmall" type="button" onClick={() => startEdit(t)} disabled={loading}>
+                            Rename
+                          </button>
+                          <button
+                            className="btn btnSmall btnDanger"
+                            type="button"
+                            onClick={() => onDelete(t.id)}
+                            disabled={loading}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="footerRow">
+          <button className="btn" onClick={onClose} disabled={loading}>
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
